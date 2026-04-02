@@ -243,7 +243,7 @@ class BackupScreen(ActionScreen):
                     if do_s3:
                         log_callback("[cyan]☁️ Uploading to S3...[/]")
                         s3_obj = f"{server}/{zip_path.name}"
-                        up_success = upload_to_s3(zip_path, s3_obj)
+                        up_success = upload_to_s3(zip_path, s3_obj, logger=log_callback)
                         if up_success:
                             log_callback("[green]✅ S3 Upload successful![/]")
                         else:

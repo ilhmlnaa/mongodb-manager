@@ -35,5 +35,17 @@ def save_servers(servers: dict):
     with open(SERVERS_FILE, "w") as f:
         json.dump(servers, f, indent=2)
 
+def _is_set(value: str | None) -> bool:
+    return value is not None and value.strip() != ""
+
+def get_s3_missing_keys() -> list[str]:
+    required = {
+        "S3_ENDPOINT": S3_ENDPOINT,
+        "S3_ACCESS_KEY": S3_ACCESS_KEY,
+        "S3_SECRET_KEY": S3_SECRET_KEY,
+        "S3_BUCKET_NAME": S3_BUCKET_NAME,
+    }
+    return [key for key, value in required.items() if not _is_set(value)]
+
 def is_s3_configured() -> bool:
-    return all(v is not None for v in [S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME])
+    return len(get_s3_missing_keys()) == 0
