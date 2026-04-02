@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -45,7 +46,14 @@ def _migrate_legacy_json(legacy_file: Path, target_file: Path) -> None:
     if target_file.exists() or not legacy_file.exists():
         return
     target_file.parent.mkdir(parents=True, exist_ok=True)
-    legacy_file.replace(target_file)
+    try:
+        legacy_file.replace(target_file)
+    except OSError:
+        try:
+            shutil.copy2(legacy_file, target_file)
+            legacy_file.unlink(missing_ok=True)
+        except PermissionError:
+            return
 
 def _initialize_config_layout() -> None:
     _ensure_config_dir()
@@ -56,28 +64,47 @@ def _initialize_config_layout() -> None:
 _initialize_config_layout()
 
 def load_servers() -> dict:
-    if not SERVERS_FILE.exists():
-        return {}
-    with open(SERVERS_FILE, "r") as f:
-        return json.load(f)
+    if SERVERS_FILE.exists():
+        with open(SERVERS_FILE, "r") as f:
+            return json.load(f)
+
+    if LEGACY_SERVERS_FILE.exists():
+        with open(LEGACY_SERVERS_FILE, "r") as f:
+            return json.load(f)
+
+    return {}
 
 def save_servers(servers: dict):
-    with open(SERVERS_FILE, "w") as f:
-        json.dump(servers, f, indent=2)
+    try:
+        with open(SERVERS_FILE, "w") as f:
+            json.dump(servers, f, indent=2)
+    except PermissionError:
+        with open(LEGACY_SERVERS_FILE, "w") as f:
+            json.dump(servers, f, indent=2)
 
 def load_settings() -> dict:
-    if not SETTINGS_FILE.exists():
-        return {}
-    try:
+    if SETTINGS_FILE.exists():
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+
+    if LEGACY_SETTINGS_FILE.exists():
+        try:
+            with open(LEGACY_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    return {}
 
 def save_settings(settings: dict) -> None:
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+    except PermissionError:
+        with open(LEGACY_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
 
 def _is_set(value: str | None) -> bool:
     return value is not None and value.strip() != ""

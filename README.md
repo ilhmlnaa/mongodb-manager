@@ -244,7 +244,7 @@ From the main menu, open **Schedule Backup** and set:
 
 When you click `Save`, the app will:
 
-- Store configuration in `backup_schedules.json`
+- Store configuration in `config-data/backup_schedules.json`
 - Generate a cron expression
 - Show a ready-to-use cron line
 
@@ -278,6 +278,27 @@ docker build -t mongo-manager .
 docker run --rm -p 8000:8000 --env-file .env mongo-manager
 ```
 
+### Run with Docker Compose (Recommended for persistent data)
+
+Use bind volumes for both configs and backups:
+
+```bash
+docker compose up -d --build
+```
+
+This project includes `docker-compose.yml` with:
+
+- `./config-data:/app/config-data` for JSON configs (`servers.json`, `backup_schedules.json`, `app_settings.json`)
+- `./mongodb-backup:/app/mongodb-backup` for backup output
+
+For Linux hosts, set UID/GID so container file permissions match your user:
+
+```bash
+export UID=$(id -u)
+export GID=$(id -g)
+docker compose up -d --build
+```
+
 Default container command:
 
 ```bash
@@ -295,6 +316,8 @@ python main.py web
 - **S3 upload fails**
   - Verify all S3 variables in `.env`.
   - Ensure `Compress to ZIP` is enabled.
+- **Permission denied on `/app/config-data`**
+  - Use the provided `docker-compose.yml` and set `UID`/`GID` on Linux.
 - **Custom schedule is rejected**
   - Ensure the cron expression has exactly 5 fields.
 

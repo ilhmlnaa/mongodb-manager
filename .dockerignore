@@ -9,6 +9,7 @@ venv/
 .git/
 .vscode/
 mongodb-backup/
+config-data/
 *.zip
 dev
 
