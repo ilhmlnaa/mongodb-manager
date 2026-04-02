@@ -26,15 +26,18 @@ EXTRACTED_DIR="mongodb-database-tools-${DISTRO}-${ARCH_SUFFIX}-${TOOLS_VERSION}"
 
 TARGET_DIR="/app/mongo-tools/linux/bin"
 TMP_DIR="/tmp/mongodb-tools"
+REQUIRED_TOOLS="mongodump mongorestore"
 
 mkdir -p "$TMP_DIR" "$TARGET_DIR"
 
 curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME"
 tar -xzf "$TMP_DIR/$ARCHIVE_NAME" -C "$TMP_DIR"
 
-cp "$TMP_DIR/$EXTRACTED_DIR/bin/"* "$TARGET_DIR/"
+for tool in $REQUIRED_TOOLS; do
+  cp "$TMP_DIR/$EXTRACTED_DIR/bin/$tool" "$TARGET_DIR/$tool"
+done
 chmod +x "$TARGET_DIR/"*
 
 rm -rf "$TMP_DIR"
 
-echo "MongoDB Database Tools installed to $TARGET_DIR"
+echo "MongoDB Database Tools installed to $TARGET_DIR (tools: $REQUIRED_TOOLS)"

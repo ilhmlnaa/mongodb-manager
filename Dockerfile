@@ -12,6 +12,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libstdc++6 curl \
     && rm -rf /var/lib/apt/lists/*
 
+RUN useradd --create-home --shell /bin/bash app
+
 COPY scripts/install_mongodb_tools.sh /tmp/install_mongodb_tools.sh
 RUN chmod +x /tmp/install_mongodb_tools.sh \
     && /tmp/install_mongodb_tools.sh \
@@ -20,10 +22,9 @@ RUN chmod +x /tmp/install_mongodb_tools.sh \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
-
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+COPY --chown=app:app . .
+RUN mkdir -p /app/mongodb-backup \
+    && chown app:app /app/mongodb-backup
 
 USER app
 
