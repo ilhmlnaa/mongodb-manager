@@ -11,6 +11,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SERVERS_FILE = SCRIPT_DIR / "servers.json"
 BACKUP_DIR = SCRIPT_DIR / "mongodb-backup"
 SCHEDULES_FILE = SCRIPT_DIR / "backup_schedules.json"
+SETTINGS_FILE = SCRIPT_DIR / "app_settings.json"
 
 # S3 configurations from .env
 S3_ENDPOINT = os.getenv("S3_ENDPOINT")
@@ -34,6 +35,20 @@ def load_servers() -> dict:
 def save_servers(servers: dict):
     with open(SERVERS_FILE, "w") as f:
         json.dump(servers, f, indent=2)
+
+def load_settings() -> dict:
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def save_settings(settings: dict) -> None:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
 def _is_set(value: str | None) -> bool:
     return value is not None and value.strip() != ""

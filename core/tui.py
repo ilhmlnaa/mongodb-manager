@@ -11,7 +11,7 @@ from textual.screen import Screen
 from textual.widgets import Header, Footer, Button, Label, Select, Checkbox, Input, RichLog, ListView, ListItem
 from textual.containers import Vertical, Horizontal, ScrollableContainer
 
-from .config import load_servers, save_servers, BACKUP_DIR, SCRIPT_DIR, SCHEDULES_FILE, is_s3_configured
+from .config import load_servers, save_servers, load_settings, save_settings, BACKUP_DIR, SCRIPT_DIR, SCHEDULES_FILE, is_s3_configured
 from .database import get_accessible_databases, dump_database, restore_database, test_mongo_connection
 from .storage import zip_directory, upload_to_s3
 
@@ -573,6 +573,10 @@ class ScheduleBackupScreen(ActionScreen):
             cmd += " --s3"
         return cmd
 
+    def _build_cron_line(self, cron_expr: str, command: str, timezone: str) -> str:
+        cron_tz = f"CRON_TZ={timezone}"
+        return f"{cron_tz}\n{cron_expr} cd {SCRIPT_DIR} && {command} >> {SCRIPT_DIR / 'cron.log'} 2>&1"
+
     def _is_valid_cron_expression(self, cron_expression: str) -> bool:
         parts = cron_expression.strip().split()
         return len(parts) == 5
@@ -669,15 +673,17 @@ class ScheduleBackupScreen(ActionScreen):
                 self.notify("Unknown schedule type selected.", severity="error")
                 return
 
-        self.write_log(f"[cyan]Generated cron: {cron_expr}[/]")
+        timezone = self.app.get_timezone()
+        self.write_log(f"[cyan]Generated cron ({timezone}): {cron_expr}[/]")
         command = self._build_backup_command(str(server), str(db), do_zip, do_s3)
-        cron_line = f"{cron_expr} cd {SCRIPT_DIR} && {command} >> {SCRIPT_DIR / 'cron.log'} 2>&1"
+        cron_line = self._build_cron_line(cron_expr, command, timezone)
 
         schedule_item = {
             "created_at": self.app.now().isoformat(timespec="seconds"),
             "server": str(server),
             "database": str(db),
             "schedule_type": str(schedule_type),
+            "timezone": timezone,
             "time": time_label,
             "weekday": weekday_label,
             "day_of_month": monthday_label,
@@ -792,6 +798,7 @@ class ManageSchedulesScreen(ActionScreen):
             f"Server: {item.get('server', '-')}",
             f"Database: {item.get('database', '-')}",
             f"Type: {item.get('schedule_type', '-')}",
+            f"Timezone: {item.get('timezone', '-')}",
             f"Time: {item.get('time', '-')}",
             f"Weekday: {item.get('weekday', '-')}",
             f"Day of month: {item.get('day_of_month', '-')}",
@@ -927,12 +934,28 @@ class MongoManagerApp(App):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._timezone = self._detect_timezone()
+        self._timezone = self._load_timezone()
 
     def _detect_timezone(self) -> str:
         tzinfo = datetime.now().astimezone().tzinfo
         key = getattr(tzinfo, "key", None)
         return key if isinstance(key, str) else "UTC"
+
+    def _load_timezone(self) -> str:
+        settings = load_settings()
+        saved_timezone = settings.get("timezone")
+        if isinstance(saved_timezone, str) and saved_timezone:
+            try:
+                ZoneInfo(saved_timezone)
+                return saved_timezone
+            except ZoneInfoNotFoundError:
+                pass
+        return self._detect_timezone()
+
+    def _save_timezone(self) -> None:
+        settings = load_settings()
+        settings["timezone"] = self._timezone
+        save_settings(settings)
 
     def set_timezone(self, timezone_name: str) -> None:
         try:
@@ -941,6 +964,7 @@ class MongoManagerApp(App):
             self.notify(f"Timezone '{timezone_name}' not found.", severity="error")
             return
         self._timezone = timezone_name
+        self._save_timezone()
 
     def get_timezone(self) -> str:
         return self._timezone

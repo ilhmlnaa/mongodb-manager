@@ -25,8 +25,19 @@ DOWNLOAD_URL="${BASE_URL}/${ARCHIVE_NAME}"
 EXTRACTED_DIR="mongodb-database-tools-${DISTRO}-${ARCH_SUFFIX}-${TOOLS_VERSION}"
 
 TARGET_DIR="/app/mongo-tools/linux/bin"
+USR_LOCAL_BIN="/usr/local/bin"
 TMP_DIR="/tmp/mongodb-tools"
 REQUIRED_TOOLS="mongodump mongorestore"
+
+if [ "$(id -u)" -ne 0 ]; then
+  if command -v mongodump >/dev/null 2>&1 && command -v mongorestore >/dev/null 2>&1; then
+    echo "MongoDB Database Tools are already available in PATH."
+    exit 0
+  fi
+
+  echo "This installer must be run as root to copy tools into /app/mongo-tools/linux/bin."
+  exit 1
+fi
 
 mkdir -p "$TMP_DIR" "$TARGET_DIR"
 
@@ -35,6 +46,7 @@ tar -xzf "$TMP_DIR/$ARCHIVE_NAME" -C "$TMP_DIR"
 
 for tool in $REQUIRED_TOOLS; do
   cp "$TMP_DIR/$EXTRACTED_DIR/bin/$tool" "$TARGET_DIR/$tool"
+  ln -sf "$TARGET_DIR/$tool" "$USR_LOCAL_BIN/$tool"
 done
 chmod +x "$TARGET_DIR/"*
 
