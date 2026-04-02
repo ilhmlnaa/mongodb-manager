@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import shutil
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -26,16 +27,36 @@ class BaseScreen(Screen):
 
 
 class MainMenuScreen(BaseScreen):
+    TIMEZONE_OPTIONS = [
+        ("UTC", "UTC"),
+        ("Asia/Jakarta", "Asia/Jakarta"),
+        ("Asia/Singapore", "Asia/Singapore"),
+        ("Asia/Tokyo", "Asia/Tokyo"),
+        ("Europe/London", "Europe/London"),
+        ("America/New_York", "America/New_York"),
+    ]
+
     BINDINGS = [
         ("down", "app.focus_next", "Next"),
         ("up", "app.focus_previous", "Previous"),
     ]
 
     def on_mount(self) -> None:
+        timezone_select = self.query_one("#sel-timezone", Select)
+        timezone_select.set_options(self.TIMEZONE_OPTIONS)
+        current_timezone = self.app.get_timezone()
+        if current_timezone in [value for _, value in self.TIMEZONE_OPTIONS]:
+            timezone_select.value = current_timezone
+        self._update_clock()
+        self.set_interval(1, self._update_clock)
+
         try:
             self.query_one("#btn-backup", Button).focus()
         except:
             pass
+
+    def _update_clock(self) -> None:
+        self.query_one("#lbl-menu-clock", Label).update(self.app.get_time_display())
 
     def compose_content(self) -> ComposeResult:
         with Vertical(id="menu-container"):
@@ -46,7 +67,14 @@ class MainMenuScreen(BaseScreen):
             yield Button("Restore Database", id="btn-restore", variant="primary")
             yield Button("Synchronize Databases", id="btn-sync", variant="primary")
             yield Button("Manage Servers", id="btn-servers")
+            yield Select([], prompt="Select Timezone", id="sel-timezone")
+            yield Label("Time: -", id="lbl-menu-clock")
             yield Button("Exit", id="btn-exit", variant="error")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.control.id == "sel-timezone" and event.value:
+            self.app.set_timezone(str(event.value))
+            self._update_clock()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-backup":
@@ -75,13 +103,18 @@ class ManageServersScreen(BaseScreen):
                 prompt="Select Server to Remove", 
                 id="server-list"
             )
-            yield Button("Remove Server", id="btn-remove-server", variant="error")
+            yield Button("Remove Server", id="btn-remove-server", variant="error", disabled=len(servers) == 0)
             yield Label("--- Or Add a New Server ---", classes="divider")
             yield Input(placeholder="Server Name (Alias)", id="input-server-name")
             yield Input(placeholder="MongoDB URI (e.g. mongodb://...)", id="input-server-uri")
             yield Button("Test & Add Server", id="btn-add-server", variant="success")
             yield Label("", id="lbl-server-status")
-            yield Button("⏪ Back", id="btn-back")
+            yield Button("Back", id="btn-back")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.control.id != "server-list":
+            return
+        self.query_one("#btn-remove-server", Button).disabled = not bool(event.value)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":
@@ -113,6 +146,7 @@ class ManageServersScreen(BaseScreen):
                 lbl.update(f"[green]Added server '{name}' successfully![/]")
                 select = self.query_one("#server-list", Select)
                 select.set_options([(s, s) for s in servers.keys()])
+                self.query_one("#btn-remove-server", Button).disabled = False
             else:
                 lbl.update("[red]Connection test failed. Invalid URI.[/]")
 
@@ -124,7 +158,7 @@ class ActionScreen(BaseScreen):
         log_panel = RichLog(highlight=True, markup=True, id="rich-log")
         log_panel.can_focus = False
         yield log_panel
-        yield Button("⏪ Back to Menu", id="btn-back", disabled=False)
+        yield Button("Back to Menu", id="btn-back", disabled=False)
 
     def write_log(self, text: str) -> None:
         log_widget = self.query_one("#rich-log", RichLog)
@@ -155,19 +189,25 @@ class BackupScreen(ActionScreen):
                 id="chk-s3", 
                 disabled=not s3_configured
             )
-            yield Button("🚀 Start Backup", id="btn-start-backup", variant="success")
+            yield Button("Start Backup", id="btn-start-backup", variant="success", disabled=True)
+
+    def _update_submit_state(self) -> None:
+        server = self.query_one("#sel-server", Select).value
+        db = self.query_one("#sel-db", Select).value
+        self.query_one("#btn-start-backup", Button).disabled = not (server and db)
 
     @work(thread=True)
     def fetch_databases(self, server_name: str, uri: str) -> None:
         self.app.call_from_thread(self.write_log, f"[yellow]Fetching databases for '{server_name}'...[/]")
         dbs = get_accessible_databases(uri)
-        options = [("📦 Backup All", "all")] + [(db, db) for db in dbs]
+        options = [("Backup All", "all")] + [(db, db) for db in dbs]
         
         def update_ui():
             sel_db = self.query_one("#sel-db", Select)
             sel_db.set_options(options)
             sel_db.disabled = False
             self.write_log("[green]Databases fetched.[/]")
+            self._update_submit_state()
             try:
                 sel_db.focus()
             except:
@@ -182,6 +222,9 @@ class BackupScreen(ActionScreen):
             if uri:
                 self.query_one("#sel-db", Select).disabled = True
                 self.fetch_databases(event.value, uri)
+                self._update_submit_state()
+        elif event.control.id == "sel-db":
+            self._update_submit_state()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         if event.checkbox.id != "chk-zip":
@@ -220,34 +263,34 @@ class BackupScreen(ActionScreen):
         try:
             servers = load_servers()
             uri = servers[server]
-            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+            timestamp = self.app.now().strftime("%Y-%m-%d-%H-%M")
             folder = BACKUP_DIR / server / timestamp
             folder.mkdir(parents=True, exist_ok=True)
             
             def log_callback(msg: str):
                 self.app.call_from_thread(self.write_log, msg)
 
-            log_callback(f"[cyan]📤 Dumping database '{db}' from '{server}'...[/]")
+            log_callback(f"[cyan]Dumping database '{db}' from '{server}'...[/]")
             success = dump_database(uri, db, folder, logger=log_callback)
             
             if not success:
-                log_callback("[red]❌ Backup process failed![/]")
+                log_callback("[red]Backup process failed.[/]")
                 return
-            log_callback("[green]✅ Database dump successful.[/]")
+            log_callback("[green]Database dump successful.[/]")
 
             if do_zip:
-                log_callback("[cyan]📦 Zipping backup folder...[/]")
+                log_callback("[cyan]Zipping backup folder...[/]")
                 zip_path = zip_directory(folder)
                 if zip_path:
-                    log_callback(f"[green]✅ ZIP Created at: {zip_path}[/]")
+                    log_callback(f"[green]ZIP created at: {zip_path}[/]")
                     if do_s3:
-                        log_callback("[cyan]☁️ Uploading to S3...[/]")
+                        log_callback("[cyan]Uploading to S3...[/]")
                         s3_obj = f"{server}/{zip_path.name}"
                         up_success = upload_to_s3(zip_path, s3_obj, logger=log_callback)
                         if up_success:
-                            log_callback("[green]✅ S3 Upload successful![/]")
+                            log_callback("[green]S3 upload successful.[/]")
                         else:
-                            log_callback("[red]❌ S3 Upload failed![/]")
+                            log_callback("[red]S3 upload failed.[/]")
         finally:
             self.app.call_from_thread(self.set_running, False)
 
@@ -266,7 +309,16 @@ class RestoreScreen(ActionScreen):
                     if f.is_dir():
                         backups.append((f.name, str(f)))
             yield Select(backups, prompt="Select Backup Folder", id="sel-backup-dir")
-            yield Button("🔥 Start Restore", id="btn-start-restore", variant="warning")
+            yield Button("Start Restore", id="btn-start-restore", variant="warning", disabled=True)
+
+    def _update_submit_state(self) -> None:
+        server = self.query_one("#sel-server", Select).value
+        folder = self.query_one("#sel-backup-dir", Select).value
+        self.query_one("#btn-start-restore", Button).disabled = not (server and folder)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.control.id in ("sel-server", "sel-backup-dir"):
+            self._update_submit_state()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":
@@ -291,12 +343,12 @@ class RestoreScreen(ActionScreen):
             def log_cmd(msg: str):
                 self.app.call_from_thread(self.write_log, msg)
 
-            log_cmd(f"[cyan]📥 Restoring from '{folder}' to '{server}'...[/]")
+            log_cmd(f"[cyan]Restoring from '{folder}' to '{server}'...[/]")
             success = restore_database(uri, "", str(folder), logger=log_cmd)
             if success:
-                log_cmd("[green]✅ Database restored successfully.[/]")
+                log_cmd("[green]Database restored successfully.[/]")
             else:
-                log_cmd("[red]❌ Restore process failed![/]")
+                log_cmd("[red]Restore process failed.[/]")
         finally:
             self.app.call_from_thread(self.set_running, False)
 
@@ -311,7 +363,13 @@ class SyncScreen(ActionScreen):
             yield Select([(s, s) for s in servers.keys()], prompt="Target Server", id="sel-target")
             yield Select([], prompt="Database", id="sel-db", disabled=True)
             yield Input(placeholder="Custom Target DB Name (Optional)", id="in-custom-db")
-            yield Button("🔄 Start Synchronization", id="btn-sync", variant="primary")
+            yield Button("Start Synchronization", id="btn-sync", variant="primary", disabled=True)
+
+    def _update_submit_state(self) -> None:
+        src = self.query_one("#sel-source", Select).value
+        tgt = self.query_one("#sel-target", Select).value
+        db = self.query_one("#sel-db", Select).value
+        self.query_one("#btn-sync", Button).disabled = not (src and tgt and db)
 
     @work(thread=True)
     def fetch_databases(self, uri: str) -> None:
@@ -321,6 +379,7 @@ class SyncScreen(ActionScreen):
             sel_db = self.query_one("#sel-db", Select)
             sel_db.set_options(options)
             sel_db.disabled = False
+            self._update_submit_state()
             try:
                 sel_db.focus()
             except:
@@ -334,6 +393,9 @@ class SyncScreen(ActionScreen):
             if uri:
                 self.query_one("#sel-db", Select).disabled = True
                 self.fetch_databases(uri)
+                self._update_submit_state()
+        elif event.control.id in ("sel-target", "sel-db"):
+            self._update_submit_state()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":
@@ -365,16 +427,16 @@ class SyncScreen(ActionScreen):
             if temp_dir.exists():
                 shutil.rmtree(temp_dir)
 
-            log_cmd(f"[cyan]📤 Dumping '{db}' from '{src}'...[/]")
+            log_cmd(f"[cyan]Dumping '{db}' from '{src}'...[/]")
             if not dump_database(servers[src], db, temp_dir, logger=log_cmd):
-                log_cmd("[red]❌ Sync aborted due to dump failure.[/]")
+                log_cmd("[red]Sync aborted due to dump failure.[/]")
                 return
 
-            log_cmd(f"[cyan]📥 Restoring to '{tgt}' as '{custom_db}'...[/]")
+            log_cmd(f"[cyan]Restoring to '{tgt}' as '{custom_db}'...[/]")
             if restore_database(servers[tgt], custom_db, str(temp_dir), source_db_name=db, logger=log_cmd):
-                log_cmd("[green]✅ Synchronize completed successfully.[/]")
+                log_cmd("[green]Synchronize completed successfully.[/]")
             else:
-                log_cmd("[red]❌ Synchronize failed at restore stage.[/]")
+                log_cmd("[red]Synchronize failed at restore stage.[/]")
             
             shutil.rmtree(temp_dir)
         finally:
@@ -424,19 +486,35 @@ class ScheduleBackupScreen(ActionScreen):
                 id="sch-s3",
                 disabled=not s3_configured,
             )
-            yield Button("💾 Save Schedule", id="btn-save-schedule", variant="success")
+            yield Button("Save Schedule", id="btn-save-schedule", variant="success", disabled=True)
+
+    def _update_submit_state(self) -> None:
+        server = self.query_one("#sch-server", Select).value
+        db = self.query_one("#sch-db", Select).value
+        schedule_type = self.query_one("#sch-type", Select).value
+        weekday = self.query_one("#sch-weekday", Select).value
+        monthday = self.query_one("#sch-monthday", Select).value
+
+        enabled = bool(server and db and schedule_type)
+        if enabled and schedule_type == "weekly":
+            enabled = bool(weekday)
+        if enabled and schedule_type in ("monthly", "quarterly"):
+            enabled = bool(monthday)
+
+        self.query_one("#btn-save-schedule", Button).disabled = not enabled
 
     @work(thread=True)
     def fetch_databases(self, server_name: str, uri: str) -> None:
         self.app.call_from_thread(self.write_log, f"[yellow]Fetching databases for '{server_name}'...[/]")
         dbs = get_accessible_databases(uri)
-        options = [("📦 Backup All", "all")] + [(db, db) for db in dbs]
+        options = [("Backup All", "all")] + [(db, db) for db in dbs]
 
         def update_ui():
             sel_db = self.query_one("#sch-db", Select)
             sel_db.set_options(options)
             sel_db.disabled = False
             self.write_log("[green]Databases fetched for schedule form.[/]")
+            self._update_submit_state()
 
         self.app.call_from_thread(update_ui)
 
@@ -447,6 +525,7 @@ class ScheduleBackupScreen(ActionScreen):
             if uri:
                 self.query_one("#sch-db", Select).disabled = True
                 self.fetch_databases(event.value, uri)
+                self._update_submit_state()
 
         if event.control.id == "sch-type":
             schedule_type = str(event.value)
@@ -457,6 +536,10 @@ class ScheduleBackupScreen(ActionScreen):
             weekday_select.disabled = schedule_type != "weekly"
             monthday_select.disabled = schedule_type not in ("monthly", "quarterly")
             custom_cron_input.disabled = schedule_type != "custom"
+            self._update_submit_state()
+
+        if event.control.id in ("sch-db", "sch-weekday", "sch-monthday"):
+            self._update_submit_state()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         if event.checkbox.id != "sch-zip":
@@ -591,7 +674,7 @@ class ScheduleBackupScreen(ActionScreen):
         cron_line = f"{cron_expr} cd {SCRIPT_DIR} && {command} >> {SCRIPT_DIR / 'cron.log'} 2>&1"
 
         schedule_item = {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "created_at": self.app.now().isoformat(timespec="seconds"),
             "server": str(server),
             "database": str(db),
             "schedule_type": str(schedule_type),
@@ -669,8 +752,8 @@ class ManageSchedulesScreen(ActionScreen):
             yield from self.compose_log_panel()
             yield Select([], prompt="Select Schedule", id="sch-list")
             yield Label("Select a schedule to see detail.", id="sch-detail")
-            yield Button("🔄 Refresh", id="btn-refresh-schedule")
-            yield Button("🗑 Delete Selected", id="btn-delete-schedule", variant="error", disabled=True)
+            yield Button("Refresh", id="btn-refresh-schedule")
+            yield Button("Delete Selected", id="btn-delete-schedule", variant="error", disabled=True)
             yield Label("", id="sch-manage-status")
 
     def on_mount(self) -> None:
@@ -802,6 +885,12 @@ class MongoManagerApp(App):
         color: $text;
         width: 100%;
     }
+    #lbl-menu-clock {
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 1;
+        width: 100%;
+    }
     Button {
         width: 100%;
         margin-bottom: 1;
@@ -835,6 +924,33 @@ class MongoManagerApp(App):
         "sync": SyncScreen,
         "manage_servers": ManageServersScreen
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._timezone = self._detect_timezone()
+
+    def _detect_timezone(self) -> str:
+        tzinfo = datetime.now().astimezone().tzinfo
+        key = getattr(tzinfo, "key", None)
+        return key if isinstance(key, str) else "UTC"
+
+    def set_timezone(self, timezone_name: str) -> None:
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            self.notify(f"Timezone '{timezone_name}' not found.", severity="error")
+            return
+        self._timezone = timezone_name
+
+    def get_timezone(self) -> str:
+        return self._timezone
+
+    def now(self) -> datetime:
+        return datetime.now(ZoneInfo(self._timezone))
+
+    def get_time_display(self) -> str:
+        now = self.now()
+        return f"Time: {now.strftime('%Y-%m-%d %H:%M:%S')} | Timezone: {self._timezone}"
 
     def on_mount(self) -> None:
         self.push_screen("menu")
