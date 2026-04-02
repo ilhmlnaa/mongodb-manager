@@ -23,8 +23,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app . .
-RUN mkdir -p /app/mongodb-backup \
-    && chown app:app /app/mongodb-backup
+RUN mkdir -p /app/mongodb-backup /app/config-data \
+    && chown app:app /app/mongodb-backup /app/config-data
 
 USER app
 

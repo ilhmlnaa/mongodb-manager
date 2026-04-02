@@ -8,10 +8,22 @@ load_dotenv()
 
 # Define Paths
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
-SERVERS_FILE = SCRIPT_DIR / "servers.json"
 BACKUP_DIR = SCRIPT_DIR / "mongodb-backup"
-SCHEDULES_FILE = SCRIPT_DIR / "backup_schedules.json"
-SETTINGS_FILE = SCRIPT_DIR / "app_settings.json"
+
+_raw_config_dir = os.getenv("MONGO_MANAGER_CONFIG_DIR", "config-data").strip()
+_config_dir_path = Path(_raw_config_dir)
+if _config_dir_path.is_absolute():
+    CONFIG_DIR = _config_dir_path
+else:
+    CONFIG_DIR = (SCRIPT_DIR / _config_dir_path).resolve()
+
+SERVERS_FILE = CONFIG_DIR / "servers.json"
+SCHEDULES_FILE = CONFIG_DIR / "backup_schedules.json"
+SETTINGS_FILE = CONFIG_DIR / "app_settings.json"
+
+LEGACY_SERVERS_FILE = SCRIPT_DIR / "servers.json"
+LEGACY_SCHEDULES_FILE = SCRIPT_DIR / "backup_schedules.json"
+LEGACY_SETTINGS_FILE = SCRIPT_DIR / "app_settings.json"
 
 # S3 configurations from .env
 S3_ENDPOINT = os.getenv("S3_ENDPOINT")
@@ -25,6 +37,23 @@ try:
     WEB_PORT = int(os.getenv("MONGO_MANAGER_WEB_PORT", "8000"))
 except ValueError:
     WEB_PORT = 8000
+
+def _ensure_config_dir() -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+def _migrate_legacy_json(legacy_file: Path, target_file: Path) -> None:
+    if target_file.exists() or not legacy_file.exists():
+        return
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.replace(target_file)
+
+def _initialize_config_layout() -> None:
+    _ensure_config_dir()
+    _migrate_legacy_json(LEGACY_SERVERS_FILE, SERVERS_FILE)
+    _migrate_legacy_json(LEGACY_SCHEDULES_FILE, SCHEDULES_FILE)
+    _migrate_legacy_json(LEGACY_SETTINGS_FILE, SETTINGS_FILE)
+
+_initialize_config_layout()
 
 def load_servers() -> dict:
     if not SERVERS_FILE.exists():

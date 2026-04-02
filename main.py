@@ -10,7 +10,7 @@ from core.tui import MongoManagerApp
 def run_backup(args):
     servers = load_servers()
     if args.server not in servers:
-        print(f"❌ Server '{args.server}' not found in servers.json.")
+        print(f"❌ Server '{args.server}' not found in config-data/servers.json.")
         sys.exit(1)
 
     uri = servers[args.server]
@@ -63,7 +63,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available Commands")
 
     backup_parser = subparsers.add_parser("backup", help="Run automated backup for a server")
-    backup_parser.add_argument("server", type=str, help="Server alias defined in servers.json")
+    backup_parser.add_argument("server", type=str, help="Server alias defined in config-data/servers.json")
     backup_parser.add_argument("--db", type=str, default="all", help="Database name to backup (default: 'all')")
     backup_parser.add_argument("--out", type=str, help="Output directory path")
     backup_parser.add_argument("--zip", action="store_true", help="Compress the backup folder into a ZIP file")
