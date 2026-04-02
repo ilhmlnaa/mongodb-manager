@@ -1,0 +1,5 @@
+textual
+pymongo
+boto3
+python-dotenv
+textual-serve
